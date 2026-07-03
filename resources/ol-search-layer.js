@@ -320,6 +320,7 @@ style: function(feature, resolution) { // <-- CORREGIDO: Añadido resolution
     this.map = map;
     this.tree = {}; 
     this.currentSortedList = [];
+    let isRestoring = false; // <-- NUEVA BANDERA DE CONTROL
 
     // --- MOTOR HORSEY PARA REFERENCIA CATASTRAL ---
     const inicializarHorseyRC = () => {
@@ -389,7 +390,8 @@ style: function(feature, resolution) { // <-- CORREGIDO: Añadido resolution
     button.addEventListener('click', toggleHideShowInput, false);
 
     // --- LÓGICA DEL ÁRBOL JERÁRQUICO (PARROQUIAS Y VÍAS) ---
-    const buildTree = () => {
+    //******************************************** MODIFICADO 03/07/2026
+/*    const buildTree = () => {
       const features = source.getFeatures();
       this.tree = {};
 
@@ -413,7 +415,68 @@ style: function(feature, resolution) { // <-- CORREGIDO: Añadido resolution
       Object.keys(this.tree).sort().forEach(p => {
         selParroquia.add(new Option(p, p));
       });
-    };
+    };*/
+    //******************************************** MODIFICADO 03/07/2026
+
+const buildTree = () => {
+  const features = source.getFeatures();
+  
+  // Guardamos los valores y los índices seleccionados antes de borrar nada
+  const parroquiaSeleccionada = selParroquia.value;
+  const viaSeleccionada = selVia.value;
+  const numeroSeleccionadoIndex = selNumero.value; 
+
+  this.tree = {};
+
+  features.forEach(f => {
+    const props = f.getProperties();
+    const parroquia = props.EibCcl_Callejero_eibEntAgp || "Otras";
+    const via = (props.EibCcl_Callejero_eibTipVia || "") + "/ " + (props.EibCcl_Callejero_eibNomVia || "Sin nombre");
+    const numero = (props.ENA_N1_00 || "") + (props.ENA_L1_00 || "");
+
+    if (!this.tree[parroquia]) this.tree[parroquia] = {};
+    if (!this.tree[parroquia][via]) this.tree[parroquia][via] = [];
+    
+    this.tree[parroquia][via].push({
+      num: numero || "S/N",
+      feature: f
+    });
+  });
+
+  // Reconstruir Parroquias
+  selParroquia.innerHTML = '<option value="">Parroquia...</option>';
+  selParroquia.add(new Option("TODAS LAS PARROQUIAS", "TODAS"));
+  Object.keys(this.tree).sort().forEach(p => {
+    selParroquia.add(new Option(p, p));
+  });
+
+  // RESTAURACIÓN CONTROLADA
+  if (parroquiaSeleccionada) {
+    isRestoring = true; // Activamos la bandera para evitar bucles
+    
+    selParroquia.value = parroquiaSeleccionada;
+    selParroquia.dispatchEvent(new Event('change')); // Dispara la carga de vías de forma nativa
+    
+    if (viaSeleccionada) {
+      selVia.value = viaSeleccionada;
+      selVia.dispatchEvent(new Event('change')); // Dispara la carga de números
+      
+      if (numeroSeleccionadoIndex !== "") {
+        selNumero.value = numeroSeleccionadoIndex;
+        // ¡Ojo! NO disparamos el onchange de selNumero aquí para no volver a encuadrar
+        // ni alterar la feature que OpenLayers ya está seleccionando.
+      }
+    }
+    
+    isRestoring = false; // Desactivamos la bandera al terminar
+  }
+};
+
+
+
+
+
+
 
     if (source.getState() === 'ready') buildTree();
     source.on('change', () => {
@@ -421,7 +484,7 @@ style: function(feature, resolution) { // <-- CORREGIDO: Añadido resolution
     });
 
     // Eventos de interacción de los selectores
-    selParroquia.onchange = () => {
+/*    selParroquia.onchange = () => {
     	inputRC.value = '';
       selVia.innerHTML = '<option value="">Vía...</option>';
       selNumero.innerHTML = '<option value="">Nº...</option>';
@@ -475,7 +538,67 @@ style: function(feature, resolution) { // <-- CORREGIDO: Añadido resolution
           selNumero.add(new Option(item.num, index));
         });
       }
-    };
+    };*/
+
+selParroquia.onchange = () => {
+  // Si estamos restaurando el árbol automáticamente, no reseteamos los inputs
+  if (!isRestoring) {
+    inputRC.value = '';
+    selVia.innerHTML = '<option value="">Vía...</option>';
+    selNumero.innerHTML = '<option value="">Nº...</option>';
+  }
+  
+  const p = selParroquia.value;
+  if (!p) return;
+
+  let viasDisponibles = [];
+  if (p === "TODAS") {
+    Object.keys(this.tree).forEach(parroquiaKey => {
+      Object.keys(this.tree[parroquiaKey]).forEach(viaKey => {
+        if (!viasDisponibles.includes(viaKey)) viasDisponibles.push(viaKey);
+      });
+    });
+  } else if (this.tree[p]) {
+    viasDisponibles = Object.keys(this.tree[p]);
+  }
+
+  viasDisponibles.sort().forEach(v => {
+    selVia.add(new Option(v, v));
+  });
+};
+
+selVia.onchange = () => {
+  if (!isRestoring) {
+    selNumero.innerHTML = '<option value="">Nº...</option>';
+  }
+  
+  const p = selParroquia.value;
+  const v = selVia.value;
+  if (!v) return;
+
+  let numerosAcumulados = [];
+  if (p === "TODAS") {
+    Object.keys(this.tree).forEach(parroquiaKey => {
+      if (this.tree[parroquiaKey][v]) {
+        numerosAcumulados = numerosAcumulados.concat(this.tree[parroquiaKey][v]);
+      }
+    });
+  } else if (p && this.tree[p] && this.tree[p][v]) {
+    numerosAcumulados = this.tree[p][v];
+  }
+
+  if (numerosAcumulados.length > 0) {
+    const sortedNums = numerosAcumulados.sort((a, b) => 
+      a.num.toString().localeCompare(b.num.toString(), undefined, {numeric: true})
+    );
+    
+    this.currentSortedList = sortedNums; 
+    sortedNums.forEach((item, index) => {
+      selNumero.add(new Option(item.num, index));
+    });
+  }
+};
+
 
     selNumero.onchange = () => {
       const idx = selNumero.value;
